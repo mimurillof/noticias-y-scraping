@@ -118,6 +118,37 @@ def format_publish_time(epoch_seconds: Any) -> str | None:
         return None
 
 
+def coalesce(*values: Any) -> Any:
+    """Return the first truthy value in the provided sequence."""
+    for value in values:
+        if value:
+            return value
+    return None
+
+
+def normalize_text(value: Any) -> str | None:
+    """Convert heterogeneous values into trimmed strings when possible."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        text = value.strip()
+        return text or None
+    try:
+        text = str(value).strip()
+    except Exception:
+        return None
+    return text or None
+
+
+def coalesce_text(*values: Any) -> str | None:
+    """Return the first non-empty textual representation from the candidates."""
+    for value in values:
+        text = normalize_text(value)
+        if text:
+            return text
+    return None
+
+
 def get_publish_epoch(news_item: Dict[str, Any]) -> int | None:
     """Extracts the publication time as an epoch integer."""
     content = news_item.get("content")
@@ -135,11 +166,27 @@ def get_publish_epoch(news_item: Dict[str, Any]) -> int | None:
 
     if not time_val:
         return None
-    try:
-        # Value can be int, float, or string representations of them
-        return int(float(time_val))
-    except (ValueError, TypeError):
-        return None
+    if isinstance(time_val, dict):
+        time_val = time_val.get("raw") or time_val.get("value")
+
+    if isinstance(time_val, (int, float)):
+        return int(time_val)
+
+    if isinstance(time_val, str):
+        stripped = time_val.strip()
+        if not stripped:
+            return None
+        try:
+            # Handles numeric strings
+            return int(float(stripped))
+        except ValueError:
+            try:
+                # Handles ISO8601 strings such as "2025-10-13T21:06:42Z"
+                dt_obj = datetime.fromisoformat(stripped.replace("Z", "+00:00"))
+                return int(dt_obj.timestamp())
+            except ValueError:
+                return None
+    return None
 
 
 def format_news_item(news: Dict[str, Any]) -> Dict[str, Any] | None:
@@ -156,35 +203,87 @@ def format_news_item(news: Dict[str, Any]) -> Dict[str, Any] | None:
     thumbnail_payload = news.get("thumbnail") or content.get("thumbnail")
     if thumbnail_payload:
         thumbnail_url = pick_thumbnail_url(thumbnail_payload)
+    thumbnail_url = normalize_text(thumbnail_url)
 
-    link = news.get("link") or content.get("link")
-    if isinstance(link, dict):
-        link = link.get("url")
-    if not link:
-        link = (
-            news.get("url") or content.get("url") or content.get("clickThroughUrl")
-        )
+    link_value = coalesce(
+        news.get("link"),
+        content.get("link"),
+        news.get("url"),
+        content.get("url"),
+        content.get("clickThroughUrl"),
+    )
+    if isinstance(link_value, dict):
+        link_value = link_value.get("url")
+    link_value = normalize_text(link_value)
 
     publish_epoch = get_publish_epoch(news)
 
+    title = coalesce_text(news.get("title"), content.get("title"))
+    subtitle = coalesce_text(
+        news.get("subtitle"),
+        content.get("subtitle"),
+        content.get("description"),
+        news.get("description"),
+    )
+    summary = coalesce_text(
+        news.get("summary"),
+        content.get("summary"),
+        content.get("body"),
+        content.get("text"),
+        news.get("body"),
+    )
+    if summary and subtitle and summary.strip() == subtitle.strip():
+        summary = None
+    if not subtitle and summary:
+        subtitle = summary
+
+    source = coalesce_text(
+        news.get("publisher"),
+        news.get("source"),
+        content.get("publisher"),
+        content.get("source"),
+    )
+
     return {
         "uuid": uuid,
-        "title": news.get("title") or content.get("title"),
-        "publisher": (
-            news.get("publisher")
-            or news.get("source")
-            or content.get("publisher")
-        ),
-        "link": link,
+        "title": title,
+        "subtitle": subtitle,
+        "summary": summary,
+        "source": source,
+    "url": link_value,
         "published_at": format_publish_time(publish_epoch)
         if publish_epoch
         else None,
-        "image_url": thumbnail_url,
+        "image": thumbnail_url,
         "type": (
             news.get("type") or content.get("contentType") or content.get("type")
         ),
         "_publish_epoch": publish_epoch,  # Internal field for sorting
     }
+
+
+def normalize_existing_news_item(news: Dict[str, Any]) -> Dict[str, Any]:
+    """Ensure legacy news entries expose the new schema fields."""
+    normalized = dict(news)
+
+    link_value = normalized.get("link")
+    if isinstance(link_value, dict):
+        normalized["url"] = coalesce_text(normalized.get("url"), link_value.get("url"))
+    elif isinstance(link_value, str):
+        normalized.setdefault("url", normalize_text(link_value))
+
+    if "image" not in normalized and normalized.get("image_url"):
+        normalized["image"] = normalized.get("image_url")
+
+    if "source" not in normalized and normalized.get("publisher"):
+        normalized["source"] = normalize_text(normalized.get("publisher"))
+
+    for required_key in ("title", "subtitle", "summary", "source", "image"):
+        normalized[required_key] = normalize_text(normalized.get(required_key))
+
+    normalized["url"] = normalize_text(normalized.get("url"))
+    normalized.pop("image_url", None)
+    return normalized
 
 
 def get_new_and_recent_news(
@@ -233,7 +332,7 @@ def build_payload(
 ) -> Dict[str, Any]:
     ensure_env_loaded()
 
-    previous_news = []
+    previous_news: List[Dict[str, Any]] = []
     bucket_name = os.environ.get("SUPABASE_BUCKET_NAME", "news")
 
     # Try fetching from Supabase
@@ -246,7 +345,12 @@ def build_payload(
             supabase = create_client(supabase_url, supabase_key)
             content_bytes = supabase.storage.from_(bucket_name).download(remote_path)
             existing_data = json.loads(content_bytes)
-            previous_news = existing_data.get("portfolio_news", [])
+            raw_previous_news = existing_data.get("portfolio_news", [])
+            previous_news = [
+                normalize_existing_news_item(item)
+                for item in raw_previous_news
+                if isinstance(item, dict)
+            ]
             print("  -> Found previous news in Supabase.")
         except Exception:
             print(f"  -> Could not get previous news from Supabase (file may not exist yet). Starting fresh.")
@@ -254,7 +358,11 @@ def build_payload(
     else:
         print("  -> Supabase environment variables not set. Starting fresh.")
 
-    seen_uuids = {news.get("uuid") for news in previous_news}
+    seen_uuids: set[str] = {
+        str(news["uuid"])
+        for news in previous_news
+        if isinstance(news.get("uuid"), str)
+    }
 
     # Add epoch time to previous news for sorting
     for news in previous_news:
@@ -287,6 +395,8 @@ def build_payload(
     # Clean up internal epoch field before saving
     for news in top_news:
         news.pop("_publish_epoch", None)
+        news.pop("link", None)
+        news.pop("publisher", None)
 
     return {
         "generated_at": datetime.now(tz=timezone.utc).isoformat(),
