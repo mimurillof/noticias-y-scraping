@@ -9,8 +9,51 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import os
+from pathlib import Path
+from supabase import create_client
 from datetime import datetime, timezone
 from typing import Any, Dict, List
+
+_ENV_LOADED = False
+
+
+def ensure_env_loaded() -> None:
+    """Load environment variables from a .env file once if python-dotenv exists."""
+    global _ENV_LOADED
+    if _ENV_LOADED:
+        return
+    try:
+        from dotenv import load_dotenv  # type: ignore
+    except ImportError:
+        _load_env_file()
+        _ENV_LOADED = True
+        return
+
+    load_dotenv()
+    _ENV_LOADED = True
+
+
+def _load_env_file() -> None:
+    """Fallback loader that parses a .env file manually."""
+    candidate_paths = [
+        Path(__file__).resolve().parent / ".env",
+        Path.cwd() / ".env",
+    ]
+
+    for env_path in candidate_paths:
+        if not env_path.exists():
+            continue
+        for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            if key and key not in os.environ:
+                os.environ[key] = value
+        break
 
 import yfinance as yf
 
@@ -186,14 +229,30 @@ def get_new_and_recent_news(
 
 
 def build_payload(
-    tickers: List[str], max_items: int, output_file: str
+    tickers: List[str], max_items: int, remote_path: str
 ) -> Dict[str, Any]:
-    try:
-        with open(output_file, "r", encoding="utf-8") as f:
-            existing_data = json.load(f)
+    ensure_env_loaded()
+
+    previous_news = []
+    bucket_name = os.environ.get("SUPABASE_BUCKET_NAME", "news")
+
+    # Try fetching from Supabase
+    supabase_url = os.environ.get("SUPABASE_URL")
+    supabase_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or os.environ.get("SUPABASE_ANON_KEY")
+
+    if supabase_url and supabase_key:
+        print("Downloading existing news from Supabase...")
+        try:
+            supabase = create_client(supabase_url, supabase_key)
+            content_bytes = supabase.storage.from_(bucket_name).download(remote_path)
+            existing_data = json.loads(content_bytes)
             previous_news = existing_data.get("portfolio_news", [])
-    except (FileNotFoundError, json.JSONDecodeError):
-        previous_news = []
+            print("  -> Found previous news in Supabase.")
+        except Exception:
+            print(f"  -> Could not get previous news from Supabase (file may not exist yet). Starting fresh.")
+            previous_news = []
+    else:
+        print("  -> Supabase environment variables not set. Starting fresh.")
 
     seen_uuids = {news.get("uuid") for news in previous_news}
 
