@@ -1,0 +1,118 @@
+{
+  "generated_at": "2025-10-13T05:17:18.698377+00:00",
+  "market_sentiment": {
+    "value": 29,
+    "description": "Fear"
+  },
+  "portfolio_news": [
+    {
+      "uuid": "0ddc0180-6fc6-39b3-8791-3a622d1a4e36",
+      "title": "Where Is MP Materials Headed After Stunning 378% Rally and Apple Partnership News?",
+      "publisher": null,
+      "link": {
+        "url": "https://finance.yahoo.com/news/where-mp-materials-headed-stunning-180518228.html",
+        "site": "finance",
+        "region": "US",
+        "lang": "en-US"
+      },
+      "published_at": null,
+      "image_url": "https://s.yimg.com/uu/api/res/1.2/hHa1.rnFIozE8uk1FxFmIg--~B/aD00MzI7dz0xMTk0O2FwcGlkPXl0YWNoeW9u/https://media.zenfs.com/en/simply_wall_st__316/7a92075e7c274cfc915511d1e9d413e3",
+      "type": "STORY"
+    },
+    {
+      "uuid": "24866beb-f1d0-317e-abf4-31237412aa35",
+      "title": "How Investors Are Reacting To PG&E (PCG) Powering Microsoft’s San Jose AI Data Center Expansion",
+      "publisher": null,
+      "link": {
+        "url": "https://finance.yahoo.com/news/investors-reacting-pg-e-pcg-001145738.html",
+        "site": "finance",
+        "region": "US",
+        "lang": "en-US"
+      },
+      "published_at": null,
+      "image_url": "https://s.yimg.com/uu/api/res/1.2/yWzYgCYOuPwuCar4ge8bNA--~B/aD00MzI7dz0xMTk0O2FwcGlkPXl0YWNoeW9u/https://media.zenfs.com/en/simply_wall_st__316/77129745f539b930e544feec447035d8",
+      "type": "STORY"
+    },
+    {
+      "uuid": "7139a6f5-307a-4d19-abbb-a24244019860",
+      "title": "Automakers to take $30B tariff hit to profits: Moody's",
+      "publisher": null,
+      "link": {
+        "url": "https://finance.yahoo.com/news/automakers-to-take-30b-tariff-hit-to-profits-moodys-160923140.html",
+        "site": "finance",
+        "region": "US",
+        "lang": "en-US"
+      },
+      "published_at": null,
+      "image_url": "https://s.yimg.com/uu/api/res/1.2/YPffLt0BiPTB93KuFCh7UQ--~B/aD0yOTAzO3c9NDAwMDthcHBpZD15dGFjaHlvbg--/https://s.yimg.com/os/creatr-uploaded-images/2025-06/24ba83d0-4360-11f0-99dd-b738984f7c4a",
+      "type": "STORY"
+    }
+  ],
+  "reddit_mentions": [
+    {
+      "id": "1o3dbm7",
+      "subreddit": "wallstreetbets",
+      "title": "Enjoy the weekend",
+      "score": 38810,
+      "url": "https://i.redd.it/4xiwo8lapcuf1.jpeg",
+      "created_utc": "2025-10-10T21:17:32+00:00",
+      "source": "portfolio_mention_fallback"
+    },
+    {
+      "id": "1o0jvlo",
+      "subreddit": "wallstreetbets",
+      "title": "Someone just sold $6,560,000 worth of $AAPL 260 puts",
+      "score": 3855,
+      "url": "https://i.redd.it/yfmg7nsxwptf1.jpeg",
+      "created_utc": "2025-10-07T16:39:25+00:00",
+      "source": "portfolio_mention_fallback"
+    },
+    {
+      "id": "1ny7ylt",
+      "subreddit": "stocks",
+      "title": "Ford CEO says buyers won’t pay $75k for EVs, targets $30k models to rival BYD and move out of Tesla’s shadow",
+      "score": 2508,
+      "url": "https://www.reddit.com/r/stocks/comments/1ny7ylt/ford_ceo_says_buyers_wont_pay_75k_for_evs_targets/",
+      "created_utc": "2025-10-04T22:48:04+00:00",
+      "source": "portfolio_mention_fallback"
+    }
+  ],
+  "tradingview_ideas": [
+    {
+      "id": "QxY8E0zG",
+      "ticker": "SPX",
+      "category": "market",
+      "title": "Análisis semanal: El vuelco del mercado. Amenaza de aranceles.",
+      "author": "por JEdu1982",
+      "rating": null,
+      "published_at": "2025-10-11T10:23:37+00:00",
+      "idea_url": "https://es.tradingview.com/chart/SPX500USD/QxY8E0zG/",
+      "image_url": "https://s3.tradingview.com/q/QxY8E0zG_mid.png",
+      "source_url": "https://es.tradingview.com/symbols/SPX/ideas/?sort=recent"
+    },
+    {
+      "id": "ja8dpZaR",
+      "ticker": "SPX",
+      "category": "market",
+      "title": "Siguiente zonas de largos para SP500 para irnos a ath",
+      "author": "por Enrique122",
+      "rating": null,
+      "published_at": "2025-10-11T09:33:02+00:00",
+      "idea_url": "https://es.tradingview.com/chart/US500/ja8dpZaR/",
+      "image_url": "https://s3.tradingview.com/j/ja8dpZaR_mid.png",
+      "source_url": "https://es.tradingview.com/symbols/SPX/ideas/?sort=recent"
+    },
+    {
+      "id": "ynliYBJn",
+      "ticker": "NDX",
+      "category": "market",
+      "title": "Volatilidad e Índices Americanos: la lectura oculta del mercado",
+      "author": "por AliGermenos",
+      "rating": null,
+      "published_at": "2025-10-13T04:27:04+00:00",
+      "idea_url": "https://es.tradingview.com/chart/USTEC.F/ynliYBJn/",
+      "image_url": "https://s3.tradingview.com/y/ynliYBJn_mid.png",
+      "source_url": "https://es.tradingview.com/symbols/NASDAQ100/ideas/?sort=recent"
+    }
+  ]
+}
