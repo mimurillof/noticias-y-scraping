@@ -1,6 +1,12 @@
 import datetime
 from typing import Optional
 
+# --- PARÁMETROS DE RANKING Y FRESCURA ---
+RECENT_HOURS_HARD_LIMIT = 96  # descartar posts más viejos que 4 días
+FRESH_HOURS_SOFT_LIMIT = 36   # prioridad a posts dentro de este rango
+MINIMUM_SCORE_THRESHOLD = 5   # filtrar ruido con muy poco puntaje
+MAX_POSTS_RETURNED = 3
+
 import praw
 import requests
 from prawcore import exceptions as praw_exceptions
@@ -81,6 +87,7 @@ def _parse_listing_children(children: list[dict], source: str) -> list[dict]:
             'score': data.get('score'),
             'url': data.get('url'),
             'created_utc': created_iso,
+            'num_comments': data.get('num_comments'),
             'source': source,
         })
     return posts
@@ -96,17 +103,63 @@ def _parse_iso_timestamp(value: Optional[str]) -> float:
         return float('-inf')
 
 
-def _ranking_key(post: dict) -> tuple:
-    """Priority tuple to keep portfolio mentions first and high-signal posts on top."""
-    source = post.get('source', '') or ''
-    score = post.get('score') or 0
+def _now_epoch() -> float:
+    return datetime.datetime.now(tz=datetime.timezone.utc).timestamp()
+
+
+def _age_hours(created_epoch: float) -> float:
+    if created_epoch in (float('-inf'), float('inf')):
+        return float('inf')
+    return max((_now_epoch() - created_epoch) / 3600.0, 0.0)
+
+
+def _signal_score(post: dict) -> float:
     created_epoch = _parse_iso_timestamp(post.get('created_utc'))
-    is_portfolio = 0 if 'portfolio' in source else 1
+    score_raw = post.get('score') or 0
+    score = max(score_raw, 0)
+    if created_epoch == float('-inf'):
+        return 0.0
+
+    age = _age_hours(created_epoch)
+
+    # Penalización progresiva por antigüedad
+    age_decay = 1.0 / (1.0 + age / FRESH_HOURS_SOFT_LIMIT)
+
+    # Bonus por posts muy recientes
+    freshness_boost = 1.3 if age <= FRESH_HOURS_SOFT_LIMIT else 1.0
+
+    # Bonus por coincidencia directa con el portafolio (source etiquetado)
+    portfolio_boost = 1.4 if 'portfolio' in (post.get('source') or '') else 1.0
+
+    return score * age_decay * freshness_boost * portfolio_boost
+
+
+def _ranking_key(post: dict) -> tuple:
+    """Rank by custom signal score and recency, keeping IDs deterministic."""
+    created_epoch = _parse_iso_timestamp(post.get('created_utc'))
     return (
-        is_portfolio,
-        -score,
+        -_signal_score(post),
         -created_epoch,
+        post.get('id') or '',
     )
+
+
+def _is_within_recent_window(post: dict) -> bool:
+    created_epoch = _parse_iso_timestamp(post.get('created_utc'))
+    if created_epoch == float('-inf'):
+        return False
+    return _age_hours(created_epoch) <= RECENT_HOURS_HARD_LIMIT
+
+
+def _apply_quality_filters(posts: list[dict]) -> list[dict]:
+    filtered: list[dict] = []
+    for post in posts:
+        if not _is_within_recent_window(post):
+            continue
+        if (post.get('score') or 0) < MINIMUM_SCORE_THRESHOLD:
+            continue
+        filtered.append(post)
+    return filtered
 
 
 def _fetch_hot_posts_http(subreddit_name: str, limit: int) -> list[dict]:
@@ -128,7 +181,7 @@ def _fetch_hot_posts_http(subreddit_name: str, limit: int) -> list[dict]:
         return []
 
 
-def fetch_hot_posts(subreddit, limit=5):
+def fetch_hot_posts(subreddit, limit=8):
     """Obtiene las publicaciones 'hot' de un subreddit."""
     posts: list[dict] = []
     print(f"  -> Buscando publicaciones 'hot' en r/{subreddit.display_name}...")
@@ -152,16 +205,21 @@ def fetch_hot_posts(subreddit, limit=5):
         print(f"    Error al obtener posts 'hot': {e}")
         if not posts:
             posts = _fetch_hot_posts_http(subreddit.display_name, limit)
-    return posts
+    return _apply_quality_filters(posts)
 
 
-def fetch_portfolio_posts(subreddit, assets, limit=15):
+def fetch_portfolio_posts(subreddit, assets, limit=25):
     """Busca publicaciones nuevas que mencionen activos del portafolio."""
     posts: list[dict] = []
     query = ' OR '.join(asset for asset in assets)
     print(f"  -> Buscando menciones de activos en r/{subreddit.display_name}...")
     try:
-        for submission in subreddit.search(query, sort='new', limit=limit):
+        for submission in subreddit.search(
+            query,
+            sort='new',
+            time_filter='week',
+            limit=limit,
+        ):
             posts.append({
                 'id': submission.id,
                 'subreddit': subreddit.display_name,
@@ -180,7 +238,7 @@ def fetch_portfolio_posts(subreddit, assets, limit=15):
         print(f"    Error al buscar menciones: {e}")
         if not posts:
             posts = _fetch_portfolio_posts_http(subreddit.display_name, assets, limit)
-    return posts
+    return _apply_quality_filters(posts)
 
 
 def _fetch_portfolio_posts_http(subreddit_name: str, assets: list[str], limit: int) -> list[dict]:
@@ -194,6 +252,7 @@ def _fetch_portfolio_posts_http(subreddit_name: str, assets: list[str], limit: i
         'restrict_sr': 1,
         'sort': 'new',
         'limit': limit,
+        't': 'week',
     }
     try:
         response = requests.get(
@@ -205,7 +264,8 @@ def _fetch_portfolio_posts_http(subreddit_name: str, assets: list[str], limit: i
         response.raise_for_status()
         data = response.json()
         children = data.get('data', {}).get('children', [])
-        return _parse_listing_children(children, source='portfolio_mention_fallback')
+        posts = _parse_listing_children(children, source='portfolio_mention_fallback')
+        return _apply_quality_filters(posts)
     except Exception as fallback_error:
         print(f"    Fallback también falló al buscar menciones: {fallback_error}")
         return []
@@ -218,8 +278,8 @@ def fetch_reddit_posts(portfolio_assets: list[str]):
     if not reddit:
         return []
 
-    all_posts = []
-    seen_post_ids = set()
+    all_posts: list[dict] = []
+    seen_post_ids: set[str] = set()
 
     print("Iniciando monitor de Reddit para subreddits financieros...")
 
@@ -230,12 +290,9 @@ def fetch_reddit_posts(portfolio_assets: list[str]):
             
             # 1. Obtener menciones a nuestro portafolio
             portfolio_posts = fetch_portfolio_posts(subreddit, portfolio_assets)
-            
-            # 2. Si no hay menciones, obtener publicaciones 'hot'
-            if not portfolio_posts:
-                hot_posts = fetch_hot_posts(subreddit)
-            else:
-                hot_posts = []
+
+            # 2. Capturar también publicaciones de mercado en tendencia
+            hot_posts = fetch_hot_posts(subreddit)
 
             # Combinar y evitar duplicados
             for post in portfolio_posts + hot_posts:
@@ -246,8 +303,9 @@ def fetch_reddit_posts(portfolio_assets: list[str]):
         except Exception as e:
             print(f"No se pudo procesar r/{sub_name}: {e}")
 
-    if all_posts:
-        ranked_posts = sorted(all_posts, key=_ranking_key)
-        return ranked_posts[:3]
+    ranked_posts = sorted(all_posts, key=_ranking_key)
 
-    return all_posts
+    if not ranked_posts:
+        return []
+
+    return ranked_posts[:MAX_POSTS_RETURNED]
