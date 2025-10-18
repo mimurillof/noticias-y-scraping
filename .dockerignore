@@ -1,3 +1,5 @@
+# .dockerignore - Archivos excluidos del contexto de build de Docker
+
 # Python
 __pycache__/
 *.py[cod]
@@ -26,31 +28,40 @@ venv/
 ENV/
 env/
 
-# Environment Variables
+# Environment
 .env
 .env.local
+.env.*.local
 
 # IDE
 .vscode/
 .idea/
 *.swp
 *.swo
+*~
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Documentation
+*.md
+LICENSE
+
+# Temporary files
+*.log
+*.tmp
+debug_*.html
+pagina.html
+portfolio_news.json
+orchestration_summary.json
 
 # OS
 .DS_Store
 Thumbs.db
-
-# Logs
-*.log
-
-# Temporary files
-debug_*.py
-test_*.py
-tmp_*.py
-*_backup.py
-*.tmp
-*.html
-
-# Output files
-portfolio_news.json
-orchestration_summary.json

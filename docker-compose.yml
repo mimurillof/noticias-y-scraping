@@ -1,0 +1,25 @@
+# Docker Compose - Para testing local con variables de entorno
+
+version: '3.8'
+
+services:
+  portfolio-scraper:
+    build: .
+    container_name: portfolio-news-scraper
+    env_file:
+      - .env
+    environment:
+      # Valores por defecto (pueden ser sobrescritos por .env)
+      - PARALLEL_EXECUTION=false
+      - MAX_WORKERS=3
+    restart: unless-stopped
+    # Uncomment para ejecutar en modo daemon
+    # command: sh -c "while true; do python orchestrator.py; sleep 3600; done"
+    
+  # Opcional: Redis para queue
+  # redis:
+  #   image: redis:7-alpine
+  #   container_name: portfolio-redis
+  #   ports:
+  #     - "6379:6379"
+  #   restart: unless-stopped

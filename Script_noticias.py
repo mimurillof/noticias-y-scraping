@@ -15,6 +15,16 @@ from supabase import create_client
 from datetime import datetime, timezone
 from typing import Any, Dict, List
 
+# Importar normalización de símbolos
+try:
+    from symbol_normalizer import normalize_symbol
+    NORMALIZER_AVAILABLE = True
+except ImportError:
+    NORMALIZER_AVAILABLE = False
+    def normalize_symbol(symbol: str, verbose: bool = False) -> str:
+        """Fallback si no está disponible el normalizador."""
+        return symbol.upper().strip()
+
 _ENV_LOADED = False
 
 
@@ -191,6 +201,7 @@ def get_publish_epoch(news_item: Dict[str, Any]) -> int | None:
 
 def format_news_item(news: Dict[str, Any]) -> Dict[str, Any] | None:
     """Formats a raw news item dictionary."""
+    # yfinance ahora retorna: {id: ..., content: {...}}
     uuid = news.get("uuid") or news.get("id")
     if not uuid:
         return None
@@ -199,35 +210,61 @@ def format_news_item(news: Dict[str, Any]) -> Dict[str, Any] | None:
     if not isinstance(content, dict):
         content = {}
 
+    # Thumbnail: Intentar content.thumbnail primero
     thumbnail_url = None
-    thumbnail_payload = news.get("thumbnail") or content.get("thumbnail")
+    thumbnail_payload = content.get("thumbnail") or news.get("thumbnail")
     if thumbnail_payload:
         thumbnail_url = pick_thumbnail_url(thumbnail_payload)
     thumbnail_url = normalize_text(thumbnail_url)
 
-    link_value = coalesce(
-        news.get("link"),
-        content.get("link"),
-        news.get("url"),
-        content.get("url"),
-        content.get("clickThroughUrl"),
-    )
-    if isinstance(link_value, dict):
-        link_value = link_value.get("url")
+    # Link: Intentar content.clickThroughUrl (nueva estructura)
+    link_value = None
+    click_through = content.get("clickThroughUrl")
+    if isinstance(click_through, dict):
+        link_value = click_through.get("url")
+    
+    if not link_value:
+        link_value = coalesce(
+            content.get("canonicalUrl", {}).get("url") if isinstance(content.get("canonicalUrl"), dict) else None,
+            news.get("link"),
+            content.get("link"),
+            news.get("url"),
+            content.get("url"),
+        )
+        if isinstance(link_value, dict):
+            link_value = link_value.get("url")
+    
     link_value = normalize_text(link_value)
 
-    publish_epoch = get_publish_epoch(news)
+    # Publish time: Intentar content.pubDate (nueva estructura)
+    publish_epoch = None
+    pub_date = content.get("pubDate")
+    if pub_date:
+        try:
+            if isinstance(pub_date, str):
+                dt_obj = datetime.fromisoformat(pub_date.replace("Z", "+00:00"))
+                publish_epoch = int(dt_obj.timestamp())
+        except:
+            pass
+    
+    if not publish_epoch:
+        publish_epoch = get_publish_epoch(news)
 
-    title = coalesce_text(news.get("title"), content.get("title"))
+    # Title: Priorizar content.title (nueva estructura)
+    title = coalesce_text(content.get("title"), news.get("title"))
+    
+    # Subtitle/Description: Priorizar content.description
     subtitle = coalesce_text(
-        news.get("subtitle"),
         content.get("subtitle"),
+        news.get("subtitle"),
         content.get("description"),
         news.get("description"),
     )
+    
+    # Summary: Priorizar content.summary
     summary = coalesce_text(
-        news.get("summary"),
         content.get("summary"),
+        news.get("summary"),
         content.get("body"),
         content.get("text"),
         news.get("body"),
@@ -237,12 +274,19 @@ def format_news_item(news: Dict[str, Any]) -> Dict[str, Any] | None:
     if not subtitle and summary:
         subtitle = summary
 
-    source = coalesce_text(
-        news.get("publisher"),
-        news.get("source"),
-        content.get("publisher"),
-        content.get("source"),
-    )
+    # Source/Publisher: Priorizar content.provider.displayName (nueva estructura)
+    source = None
+    provider = content.get("provider")
+    if isinstance(provider, dict):
+        source = provider.get("displayName")
+    
+    if not source:
+        source = coalesce_text(
+            news.get("publisher"),
+            news.get("source"),
+            content.get("publisher"),
+            content.get("source"),
+        )
 
     return {
         "uuid": uuid,
@@ -250,13 +294,13 @@ def format_news_item(news: Dict[str, Any]) -> Dict[str, Any] | None:
         "subtitle": subtitle,
         "summary": summary,
         "source": source,
-    "url": link_value,
+        "url": link_value,
         "published_at": format_publish_time(publish_epoch)
         if publish_epoch
         else None,
         "image": thumbnail_url,
         "type": (
-            news.get("type") or content.get("contentType") or content.get("type")
+            content.get("contentType") or news.get("type") or content.get("type")
         ),
         "_publish_epoch": publish_epoch,  # Internal field for sorting
     }
@@ -290,39 +334,70 @@ def get_new_and_recent_news(
     tickers: List[str], seen_uuids: set[str]
 ) -> List[Dict[str, Any]]:
     """Fetches, filters for new and recent, and formats news."""
-    news_by_ticker: Dict[str, List[Dict[str, Any]]] = {}
+    # Normalizar los tickers antes de consultar
+    normalized_tickers = []
     for ticker in tickers:
+        normalized = normalize_symbol(ticker, verbose=False)
+        normalized_tickers.append(normalized)
+        if NORMALIZER_AVAILABLE and normalized != ticker.upper():
+            print(f"  🔧 Normalizado: {ticker} → {normalized}")
+    
+    news_by_ticker: Dict[str, List[Dict[str, Any]]] = {}
+    for ticker in normalized_tickers:
         ticker_obj = yf.Ticker(ticker)
         news_items = ticker_obj.news or []
         if isinstance(news_items, list):
             news_by_ticker[ticker] = news_items
+            print(f"     → {ticker}: {len(news_items)} noticias obtenidas de yfinance")
 
     interleaved_news: List[Dict[str, Any]] = []
     max_depth = max((len(v) for v in news_by_ticker.values()), default=0)
     for i in range(max_depth):
-        for ticker in tickers:
+        # BUGFIX: Usar normalized_tickers en lugar de tickers
+        for ticker in normalized_tickers:
             if i < len(news_by_ticker.get(ticker, [])):
                 interleaved_news.append(news_by_ticker[ticker][i])
 
+    print(f"     → Total noticias intercaladas: {len(interleaved_news)}")
+    print(f"     → UUIDs ya vistos: {len(seen_uuids)}")
+
     # Process and filter
     new_and_recent: List[Dict[str, Any]] = []
-    thirty_minutes_ago = int(datetime.now(tz=timezone.utc).timestamp()) - (30 * 60)
+    # Cambio: Usar 24 horas en lugar de 30 minutos para capturar más noticias
+    twenty_four_hours_ago = int(datetime.now(tz=timezone.utc).timestamp()) - (24 * 60 * 60)
 
     processed_in_this_run = set()
+    skipped_seen = 0
+    skipped_no_format = 0
+    skipped_old = 0
 
     for raw_news in interleaved_news:
         uuid = raw_news.get("uuid") or raw_news.get("id")
-        if not uuid or uuid in seen_uuids or uuid in processed_in_this_run:
+        if not uuid:
+            continue
+        
+        if uuid in seen_uuids or uuid in processed_in_this_run:
+            skipped_seen += 1
             continue
 
         formatted_news = format_news_item(raw_news)
         if not formatted_news:
+            skipped_no_format += 1
             continue
 
         publish_epoch = formatted_news.get("_publish_epoch")
-        if publish_epoch and publish_epoch > thirty_minutes_ago:
+        # Si no hay timestamp, incluir la noticia de todos modos
+        if not publish_epoch or publish_epoch > twenty_four_hours_ago:
             new_and_recent.append(formatted_news)
             processed_in_this_run.add(uuid)
+        else:
+            skipped_old += 1
+
+    print(f"     → Noticias filtradas:")
+    print(f"        • Ya vistas: {skipped_seen}")
+    print(f"        • Sin formatear: {skipped_no_format}")
+    print(f"        • Muy antiguas (>24h): {skipped_old}")
+    print(f"        • Nuevas y válidas: {len(new_and_recent)}")
 
     return new_and_recent
 
