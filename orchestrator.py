@@ -13,7 +13,9 @@ from portfolio_service import PortfolioService, PortfolioTaskConfig, Portfolio
 from supabase_client import SupabaseService
 from Script_noticias import build_payload as build_news_payload
 from scrape_sentiment import get_fear_and_greed_index
-from tradingview_scraper import collect_tradingview_ideas
+# BYPASS: Reemplazamos TradingView por Expert Analysis (Medium + Seeking Alpha)
+# Los datos se guardan en el mismo campo 'tradingview_ideas' para evitar cambios en el frontend
+from expert_analysis import collect_expert_analysis
 
 
 class PortfolioTaskExecutor:
@@ -84,20 +86,19 @@ class PortfolioTaskExecutor:
             print(f"    ✗ Error: {e}")
             result["errors"].append(f"news_error: {str(e)}")
         
-        # 3. TradingView Ideas
-        tradingview_ideas = []
+        # 3. Expert Analysis (Bypass: reemplaza TradingView, misma estructura JSON)
+        tradingview_ideas = []  # Mantenemos el nombre para compatibilidad con frontend
         if self.config.enable_tradingview:
-            print("  [3/3] Fetching TradingView ideas...")
+            print("  [3/3] Fetching Expert Analysis (Medium + Seeking Alpha)...")
             try:
-                tradingview_ideas = collect_tradingview_ideas(
-                    max_pages=self.config.tradingview_max_pages,
-                    cutoff_hours=self.config.tradingview_cutoff_hours,
-                    max_portfolio_items=self.config.tradingview_max_items,
+                tradingview_ideas = collect_expert_analysis(
+                    portfolio_tickers=symbols,  # Pasamos los símbolos del portfolio
+                    max_items=self.config.tradingview_max_items,
                 )
-                print(f"    ✓ Collected {len(tradingview_ideas)} TradingView ideas")
+                print(f"    ✓ Collected {len(tradingview_ideas)} expert analyses")
             except Exception as e:
                 print(f"    ✗ Error: {e}")
-                result["errors"].append(f"tradingview_error: {str(e)}")
+                result["errors"].append(f"expert_analysis_error: {str(e)}")
         
         # Consolidate final payload
         final_payload = {
