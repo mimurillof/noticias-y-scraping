@@ -40,6 +40,7 @@ SPAM_KEYWORDS = [
     "shitcoin", "memecoin", "presale", "ido", "ico launch", "pump",
     "get rich", "millionaire", "treasure", "delta kim", "legends of crypto",
     "join now", "sign up", "referral", "affiliate", "whitelist",
+    "scam exposed", "scam alert", "is it a scam", "ponzi",
     # Contenido personal/diario no relevante
     "day 1 of", "day 2 of", "day 3 of", "day 4 of", "day 5 of",
     "it's day", "organically growing", "my journey", "my portfolio",
@@ -120,19 +121,32 @@ def is_quality_article(entry: dict, clean_summary: str) -> bool:
     return True
 
 
-def get_medium_analysis(tags: List[str], limit: int = 3) -> List[Dict]:
-    """Obtiene tesis de Medium con imágenes y formato rico, filtrando contenido de baja calidad."""
+def get_medium_analysis_by_ticker(ticker: str, limit: int = 2) -> List[Dict]:
+    """
+    Busca análisis en Medium directamente por ticker.
+    Usa múltiples estrategias de búsqueda para maximizar resultados.
+    """
     analyses = []
     seen_links = set()
+    
+    # Limpiar ticker para búsqueda
+    clean_ticker = ticker.upper().replace("-USD", "").replace("^", "").replace("-", "")
+    
+    # Generar tags de búsqueda basados en el ticker
+    search_tags = _get_search_tags_for_ticker(clean_ticker)
+    
     checked_count = 0
-    max_to_check = limit * 10  # Revisar hasta 10x más artículos para encontrar los de calidad
-
-    for tag in tags:
+    max_to_check = limit * 8
+    
+    for tag in search_tags:
         if len(analyses) >= limit:
             break
             
         url = f"https://medium.com/feed/tag/{tag}"
-        feed = feedparser.parse(url)
+        try:
+            feed = feedparser.parse(url)
+        except Exception:
+            continue
 
         for entry in feed.entries:
             if len(analyses) >= limit or checked_count >= max_to_check:
@@ -143,17 +157,13 @@ def get_medium_analysis(tags: List[str], limit: int = 3) -> List[Dict]:
             if entry.link in seen_links:
                 continue
 
-            # Medium pone el contenido completo en 'content' o un resumen en 'summary'
             content_html = entry.content[0].value if 'content' in entry else entry.get('summary', '')
-            
-            # Limpiar Texto para filtrado y subtítulo
             clean_summary = clean_text(entry.get('summary', ''))
             
-            # >>> FILTRO DE CALIDAD <<<
+            # Filtro de calidad
             if not is_quality_article(entry, clean_summary):
                 continue
             
-            # 1. Extraer Imagen
             image_url = extract_image_url(content_html)
             
             analyses.append({
@@ -167,14 +177,52 @@ def get_medium_analysis(tags: List[str], limit: int = 3) -> List[Dict]:
                 "image": image_url,
                 "likes": None,
                 "published_at": entry.published if 'published' in entry else str(datetime.now(timezone.utc)),
-                "type": "ANALYSIS"
+                "type": "ANALYSIS",
+                "related_ticker": ticker  # Guardar referencia al ticker
             })
             seen_links.add(entry.link)
     
-    if checked_count > 0:
-        print(f"    → Medium: {len(analyses)} artículos de calidad de {checked_count} revisados")
-    
     return analyses
+
+
+def _get_search_tags_for_ticker(ticker: str) -> List[str]:
+    """
+    Genera tags de búsqueda dinámicamente basados en el tipo de ticker.
+    No requiere mapeo manual - detecta automáticamente la categoría.
+    """
+    tags = []
+    ticker_upper = ticker.upper()
+    
+    # 1. Detectar CRYPTO
+    crypto_tickers = ["BTC", "ETH", "SOL", "XRP", "ADA", "DOT", "AVAX", "MATIC", "LINK", "UNI", "PAXG"]
+    if ticker_upper in crypto_tickers or "USD" in ticker_upper:
+        if "BTC" in ticker_upper:
+            tags.extend(["bitcoin", "cryptocurrency"])
+        elif "ETH" in ticker_upper:
+            tags.extend(["ethereum", "cryptocurrency", "defi"])
+        elif "SOL" in ticker_upper:
+            tags.extend(["solana", "cryptocurrency"])
+        elif "PAXG" in ticker_upper:
+            tags.extend(["gold", "cryptocurrency"])
+        else:
+            tags.extend(["cryptocurrency", "crypto"])
+        return tags[:3]
+    
+    # 2. Detectar ÍNDICES
+    if ticker_upper in ["SPX", "SPY", "QQQ", "DIA", "IWM", "VTI", "VOO"]:
+        tags.extend(["stock-market", "investing", "index-funds"])
+        return tags[:3]
+    
+    # 3. Para ACCIONES - usar tags genéricos por sector (más escalable)
+    # Medium no tiene tags por ticker individual, así que usamos categorías amplias
+    tags.extend([
+        "stock-market",      # Tag general de mercado
+        "investing",         # Tag de inversión
+        "stock-analysis"     # Tag de análisis
+    ])
+    
+    return tags[:3]
+
 
 def get_seeking_alpha_analysis(ticker: str, limit: int = 2) -> List[Dict]:
     """Obtiene análisis de Seeking Alpha con formato rico."""
@@ -224,29 +272,39 @@ def get_seeking_alpha_analysis(ticker: str, limit: int = 2) -> List[Dict]:
 def get_expert_insights(portfolio_tickers: List[str]) -> List[Dict]:
     """Orquestador que combina todo."""
     insights = []
+    seen_urls = set()  # Para deduplicación global
     
-    # 1. Seeking Alpha (Específico)
-    print(f"  --> Buscando análisis ricos para: {portfolio_tickers}")
+    # 1. Seeking Alpha (Específico por ticker)
+    print(f"  --> Buscando análisis para: {portfolio_tickers}")
     for ticker in portfolio_tickers:
-        # Limpieza básica de ticker (SA usa '-' para crypto, e.g. BTC-USD)
+        # Limpieza básica de ticker
         clean_ticker = ticker.replace("USD", "-USD") if "USD" in ticker and "-" not in ticker else ticker
-        sa_news = get_seeking_alpha_analysis(clean_ticker)
-        insights.extend(sa_news)
+        clean_ticker = clean_ticker.replace("^", "")
+        
+        # Seeking Alpha por ticker
+        sa_news = get_seeking_alpha_analysis(clean_ticker, limit=2)
+        for article in sa_news:
+            url = article.get('url', article.get('uuid', ''))
+            if url not in seen_urls:
+                insights.append(article)
+                seen_urls.add(url)
 
-    # 2. Medium (Tesis Generales)
-    medium_tags = []
-    for t in portfolio_tickers:
-        if "BTC" in t: medium_tags.append("bitcoin")
-        if "ETH" in t: medium_tags.append("ethereum")
-        if "AI" in t or "NVDA" in t: medium_tags.append("artificial-intelligence")
-        if "SOL" in t: medium_tags.append("solana")
+    # 2. Medium (Por ticker - mismo patrón escalable que SA)
+    print(f"  --> Buscando análisis en Medium para: {portfolio_tickers}")
+    medium_articles = []
+    for ticker in portfolio_tickers:
+        ticker_articles = get_medium_analysis_by_ticker(ticker, limit=2)
+        for article in ticker_articles:
+            url = article.get('url', article.get('uuid', ''))
+            if url not in seen_urls:
+                medium_articles.append(article)
+                seen_urls.add(url)
     
-    medium_tags = list(set(medium_tags))
-    if medium_tags:
-        print(f"  --> Buscando tesis en Medium para tags: {medium_tags}")
-        # Traemos un poco más de Medium para rellenar si SA falla
-        medium_news = get_medium_analysis(medium_tags, limit=4)
-        insights.extend(medium_news)
+    # Limitar Medium a 4 artículos únicos máximo
+    insights.extend(medium_articles[:4])
+    
+    if medium_articles:
+        print(f"    → Medium: {len(medium_articles[:4])} artículos únicos encontrados")
 
     return insights
 
@@ -256,13 +314,14 @@ def _convert_to_tradingview_format(insight: Dict) -> Dict:
     Convierte un insight de Medium/SeekingAlpha al formato de TradingView.
     Esto permite un bypass sin modificar la estructura JSON existente.
     """
-    # Extraer ticker del título o usar 'GENERAL'
-    ticker = "GENERAL"
-    title_lower = insight.get("title", "").lower()
-    for t in ["btc", "eth", "nvda", "aapl", "msft", "tsla", "sol"]:
-        if t in title_lower:
-            ticker = t.upper()
-            break
+    # Usar el ticker relacionado si existe, sino extraer del título
+    ticker = insight.get("related_ticker", "GENERAL")
+    if ticker == "GENERAL":
+        title_lower = insight.get("title", "").lower()
+        for t in ["btc", "eth", "nvda", "aapl", "msft", "tsla", "sol", "jnj", "ko", "pg", "cvx"]:
+            if t in title_lower:
+                ticker = t.upper()
+                break
     
     return {
         # Campos originales de TradingView
